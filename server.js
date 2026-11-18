@@ -1,0 +1,29 @@
+'use strict';
+const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),WebSocket=require('ws');
+const words=require('./words.json'),rooms=new Map(),sessions=new Map(),root=path.join(__dirname,'public');
+const uid=()=>crypto.randomBytes(16).toString('hex');
+const send=(ws,msg)=>{if(ws?.readyState===1)ws.send(JSON.stringify(msg))};
+const online=r=>[...r.players.values()].filter(p=>p.ws?.readyState===1);
+const broadcast=(r,msg)=>r.players.forEach(p=>send(p.ws,msg));
+function snapshot(r){return {type:'state',code:r.code,host:r.host,phase:r.phase,round:r.round,drawer:r.drawer,deadline:r.deadline,wordLength:[...r.word].length,strokes:r.strokes,players:[...r.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,guessed:p.guessed,online:p.ws?.readyState===1}))}}
+const sync=r=>broadcast(r,snapshot(r));
+function finish(r,reason='时间到'){if(r.phase!=='drawing')return;clearTimeout(r.timer);r.phase='result';r.deadline=0;broadcast(r,{type:'result',word:r.word,reason});sync(r);r.timer=setTimeout(()=>{if(online(r).length>=2)next(r);else{r.phase='lobby';r.drawer=null;sync(r)}},5000)}
+function next(r){clearTimeout(r.timer);const ps=online(r);if(ps.length<2){r.phase='lobby';sync(r);return}const i=ps.findIndex(p=>p.id===r.drawer);const drawer=ps[(i+1+ps.length)%ps.length];r.drawer=drawer.id;r.phase='drawing';r.round++;r.word=words[crypto.randomInt(words.length)];r.strokes=[];r.deadline=Date.now()+90000;r.players.forEach(p=>p.guessed=false);sync(r);send(drawer.ws,{type:'secret',word:r.word});r.timer=setTimeout(()=>finish(r),90000)}
+function remove(r,p){r.players.delete(p.id);sessions.delete(p.ws);if(r.host===p.id)r.host=online(r)[0]?.id||[...r.players.keys()][0]||null;if(!r.players.size){clearTimeout(r.timer);rooms.delete(r.code);return}if(r.phase==='drawing'&&r.drawer===p.id)finish(r,'画手离开');else sync(r)}
+function handle(ws,m){if(!m||typeof m!=='object')return;let p=sessions.get(ws),type=m.type;
+if(type==='join'){if(p)return;let code=String(m.code||'').slice(0,6),r=code?rooms.get(code):null;if(code&&!r)return send(ws,{type:'error',text:'房间不存在'});const token=String(m.token||'');let old=r&&[...r.players.values()].find(x=>x.token===token&&token);if(old){if(old.ws&&old.ws!==ws){sessions.delete(old.ws);old.ws.close()}old.ws=ws;old.offlineAt=0;sessions.set(ws,old);send(ws,{type:'joined',id:old.id,token:old.token,code:r.code});sync(r);if(r.phase==='drawing'&&r.drawer===old.id)send(ws,{type:'secret',word:r.word});return}
+let name=String(m.name||'').trim().slice(0,16).replace(/[<>]/g,'');if(!name)return send(ws,{type:'error',text:'请输入昵称'});
+if(!r){do{code=String(crypto.randomInt(1000000)).padStart(6,'0')}while(rooms.has(code));r={code,players:new Map(),host:null,phase:'lobby',round:0,drawer:null,deadline:0,word:'',strokes:[],timer:null};rooms.set(code,r)}
+if(r.players.size>=8||r.phase!=='lobby')return send(ws,{type:'error',text:'房间已满或游戏正在进行'});
+p={id:uid(),token:uid(),name,score:0,guessed:false,ws,room:r,offlineAt:0};r.players.set(p.id,p);sessions.set(ws,p);r.host ||=p.id;send(ws,{type:'joined',id:p.id,token:p.token,code});sync(r);return}
+if(!p)return;const r=p.room;
+if(type==='start'&&p.id===r.host&&r.phase==='lobby'&&online(r).length>=2){r.round=0;r.drawer=online(r).at(-1).id;r.players.forEach(x=>x.score=0);next(r)}
+if(type==='draw'&&r.phase==='drawing'&&p.id===r.drawer&&r.strokes.length<12000){const s=m.stroke;if(!s||![s.a?.x,s.a?.y,s.b?.x,s.b?.y].every(n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1)||!/^#[0-9a-f]{6}$/i.test(s.color)||!(s.width>=1&&s.width<=32))return;r.strokes.push(s);broadcast(r,{type:'stroke',stroke:s})}
+if(type==='clear'&&r.phase==='drawing'&&p.id===r.drawer){r.strokes=[];broadcast(r,{type:'clear'})}
+if(type==='guess'&&r.phase==='drawing'&&p.id!==r.drawer&&!p.guessed){const v=String(m.text||'').trim().slice(0,60).replace(/[<>]/g,'');if(!v)return;if(v.replace(/\s/g,'').toLowerCase()===r.word.toLowerCase()){p.guessed=true;const points=100+Math.max(0,Math.floor((r.deadline-Date.now())/1000));p.score+=points;r.players.get(r.drawer).score+=30;broadcast(r,{type:'notice',text:p.name+' 猜对了！+'+points+' 分'});sync(r);if(online(r).filter(x=>x.id!==r.drawer&&!x.guessed).length===0)finish(r,'全部猜对')}else broadcast(r,{type:'chat',name:p.name,text:v})}
+if(type==='leave'){remove(r,p);send(ws,{type:'left'})}}
+const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8'};
+const server=http.createServer((req,res)=>{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/health'){res.writeHead(200,{'Content-Type':'text/plain'});return res.end('ok')}const file=path.resolve(root,'.'+(pathname==='/'?'/index.html':pathname));if(!file.startsWith(root+path.sep))return res.writeHead(403).end();fs.stat(file,(err,st)=>{if(err||!st.isFile())return res.writeHead(404).end('Not found');res.writeHead(200,{'Content-Type':mime[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store'});fs.createReadStream(file).pipe(res)})});
+const wss=new WebSocket.Server({server,maxPayload:8192});wss.on('connection',ws=>{ws.on('message',b=>{try{handle(ws,JSON.parse(b.toString()))}catch{send(ws,{type:'error',text:'消息格式错误'})}});ws.on('close',()=>{const p=sessions.get(ws);sessions.delete(ws);if(p&&p.ws===ws){p.ws=null;p.offlineAt=Date.now();sync(p.room)}})});
+setInterval(()=>{for(const r of rooms.values())for(const p of [...r.players.values()])if(p.offlineAt&&Date.now()-p.offlineAt>120000)remove(r,p)},10000).unref();
+server.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('Listening on '+server.address().port));
