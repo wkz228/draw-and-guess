@@ -19,3 +19,19 @@
 ## 当前限制
 
 这是适合朋友聚会的初版。游戏房间只保存在服务器内存，尚无账号、持久化、聊天审核或完整防滥用系统。建议部署后实际使用两部手机验证。
+
+## 管理员题库后台
+
+访问游戏域名下的 `/admin.html`。默认账号 `admin`，密码由 Render 环境变量设置，绝不可写入仓库。
+
+在 Render 服务 → Environment → Add Environment Variable 中配置：
+
+- `ADMIN_USERNAME`：`admin`（可选，默认 admin）
+- `ADMIN_PASSWORD`：自选强密码（建议至少 16 位随机字符）
+- `GITHUB_TOKEN`：GitHub fine-grained personal access token，仅授予 `wkz228/draw-and-guess` 仓库 **Contents: Read and write** 权限
+
+GitHub token 创建入口：https://github.com/settings/personal-access-tokens/new 。不要把密码或令牌发给任何人，也不要提交到 GitHub。配置后选择 Save and deploy，待 Render 显示 Live 再登录后台。
+
+后台可查看、搜索、编辑、删除、添加、批量导入、去重，并保存到 GitHub。词库文件：`words.json`、`script-words.json`。自定义房间临时词库不在后台管理范围。
+
+**注意：** GitHub 公开仓库意味着任何人都能查看题库文件，但只有管理员凭据可以通过网站修改。保存到 GitHub 会产生提交并可能触发 Render 自动部署，导致正在进行的房间重置。请避开游戏时段维护。管理员会话仅保存在进程内存，重启后需重新登录。
