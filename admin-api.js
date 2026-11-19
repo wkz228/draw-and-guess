@@ -2,7 +2,7 @@
 const crypto=require('crypto');
 const {URL}=require('url');
 const sessions=new Map(),attempts=new Map();
-const files={normal:'words.json',script:'script-words.json'};
+const files={normal:'words.json',script:'script-words.json',idiom:'idioms.json'};
 const owner='wkz228',repo='draw-and-guess',branch='main';
 const json=(res,status,data,extra={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extra});res.end(JSON.stringify(data))};
 const cookie=req=>(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('dg_admin='))?.slice(9)||'';
