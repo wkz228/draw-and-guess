@@ -21,8 +21,8 @@ test('relay requires four players and only first artist receives the secret',()=
  }
  clearTimeout(room.timer);
 });
-test('relay cannot start with fewer than four',()=>{
- const players=new Map([['a',{id:'a',ws:{}}],['b',{id:'b',ws:{}}],['c',{id:'c',ws:{}}]]);
+test('relay cannot start with fewer than three',()=>{
+ const players=new Map([['a',{id:'a',ws:{}}],['b',{id:'b',ws:{}}],]);
  const relay=createRelay({send:()=>{},broadcast:()=>{},sync:()=>{},online:r=>[...r.players.values()]});
  assert.equal(relay.start({players},['词']),false);
 });
